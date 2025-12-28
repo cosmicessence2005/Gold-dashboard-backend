@@ -1,14 +1,12 @@
-import json
-import os
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import requests
+import json
+import os
 
 app = FastAPI(title="Gold Dashboard Backend")
 
-# ---- CORS ----
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,148 +15,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- Constants ----
+# =========================
+# CONSTANTS
+# =========================
+
 USD_INR_STATIC = 83.0
 GST_RATE = 0.03
 GRAMS_PER_OUNCE = 31.1035
 
+PRESSURE_FILE = "pressure_history.json"
+MAX_DAYS = 7
+
 # =========================
-# GOLD PRICE (STABLE)
+# GOLD PRICE
 # =========================
 
 def fetch_gold_price_usd():
-    return 2350.0  # stable fallback
+    return 2350.0
 
-def convert_to_inr_10g(price_usd_oz: float):
+def convert_to_inr_10g(price_usd_oz):
     price_inr_oz = price_usd_oz * USD_INR_STATIC
     price_inr_per_gram = price_inr_oz / GRAMS_PER_OUNCE
     return round(price_inr_per_gram * 10, 2)
 
-@app.get("/")
-def root():
-    return {"status": "backend running"}
-
-@app.get("/gold")
-def gold_price():
-    price_usd = fetch_gold_price_usd()
-    price_ex_gst = convert_to_inr_10g(price_usd)
-    price_incl_gst = round(price_ex_gst * (1 + GST_RATE), 2)
-
-    return {
-        "timestamp": datetime.utcnow().isoformat(),
-        "gold_spot_usd_oz": price_usd,
-        "india_price_10g_ex_gst": price_ex_gst,
-        "india_price_10g_incl_gst": price_incl_gst,
-        "notes": "Spot-linked estimate. Retail premiums not included."
-    }
-
 # =========================
-# DAILY PRESSURE MONITOR
+# PRESSURE HELPERS
 # =========================
-
-def fetch_usd_eur():
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=EUR", timeout=5)
-        return r.json()["rates"]["EUR"]
-    except:
-        return None
-
-def fetch_usd_inr():
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=5)
-        return r.json()["rates"]["INR"]
-    except:
-        return None
-
-def classify_dollar_pressure(eur_rate):
-    if eur_rate is None:
-        return "Unknown"
-    if eur_rate < 0.90:
-        return "Strengthening"
-    elif eur_rate > 0.94:
-        return "Weakening"
-    else:
-        return "Stable"
-
-def classify_inr_pressure(inr_rate):
-    if inr_rate is None:
-        return "Unknown"
-    if inr_rate > 83.5:
-        return "High"
-    elif inr_rate < 82.5:
-        return "Low"
-    else:
-        return "Moderate"
-
-def classify_market_stress():
-    """
-    Simple proxy using USD/JPY risk signal
-    """
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=JPY", timeout=5)
-        jpy = r.json()["rates"]["JPY"]
-        if jpy > 150:
-            return "Elevated"
-        elif jpy < 135:
-            return "Low"
-        else:
-            return "Normal"
-    except:
-        return "Unknown"
-
-@app.get("/pressure")
-def daily_pressure():
-    eur = fetch_usd_eur()
-    inr = fetch_usd_inr()
-   
-    monetary = classify_dollar_pressure(eur)
-    inr_level = classify_inr_pressure(inr)
-    market = classify_market_stress()
-
-        daily_score = (
-        pressure_to_score(monetary, MONETARY_MAP) +
-        pressure_to_score(inr_level, INR_MAP) +
-        pressure_to_score(market, MARKET_MAP)
-    )
-
-        history = load_pressure_history()
-
-    history.append({
-        "date": datetime.utcnow().isoformat(),
-        "score": daily_score
-    })
-
-    save_pressure_history(history)
-
-    
-    return {
-        "timestamp": datetime.utcnow().isoformat(),
-        "monetary_pressure": monetary,
-        "inr_pressure": inr_level,
-        "market_stress": market,
-        "daily_pressure_score": daily_score,
-        "confidence": "Medium",
-        "note": "Daily pressure indicators only. No recommendation implied."
-    }
-
-PRESSURE_FILE = "pressure_history.json"
-MAX_DAYS = 7  # rolling window
-
-
-def load_pressure_history():
-    if not os.path.exists(PRESSURE_FILE):
-        return []
-    with open(PRESSURE_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_pressure_history(history):
-    with open(PRESSURE_FILE, "w") as f:
-        json.dump(history[-MAX_DAYS:], f)
-
-
-def pressure_to_score(value, mapping):
-    return mapping.get(value, 0)
 
 MONETARY_MAP = {
     "Weakening": -1,
@@ -178,21 +60,114 @@ MARKET_MAP = {
     "Elevated": 1
 }
 
+def load_pressure_history():
+    if not os.path.exists(PRESSURE_FILE):
+        return []
+    with open(PRESSURE_FILE, "r") as f:
+        return json.load(f)
 
-def compute_weekly_state(history):
-    if not history:
-        return "Insufficient data"
+def save_pressure_history(history):
+    with open(PRESSURE_FILE, "w") as f:
+        json.dump(history[-MAX_DAYS:], f)
 
-    total = sum(item["score"] for item in history)
-    avg = total / len(history)
+def pressure_to_score(value, mapping):
+    return mapping.get(value, 0)
 
-    if avg >= 0.6:
-        return "Strong Upward Pressure"
-    elif avg >= 0.2:
-        return "Mild Upward Pressure"
-    elif avg <= -0.6:
-        return "Strong Downward Pressure"
-    elif avg <= -0.2:
-        return "Mild Downward Pressure"
-    else:
-        return "Neutral"
+# =========================
+# FX FETCHERS
+# =========================
+
+def fetch_usd_eur():
+    try:
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=EUR", timeout=5)
+        return r.json()["rates"]["EUR"]
+    except:
+        return None
+
+def fetch_usd_inr():
+    try:
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=5)
+        return r.json()["rates"]["INR"]
+    except:
+        return None
+
+def classify_dollar_pressure(eur):
+    if eur is None:
+        return "Stable"
+    if eur < 0.90:
+        return "Strengthening"
+    elif eur > 0.94:
+        return "Weakening"
+    return "Stable"
+
+def classify_inr_pressure(inr):
+    if inr is None:
+        return "Moderate"
+    if inr > 83.5:
+        return "High"
+    elif inr < 82.5:
+        return "Low"
+    return "Moderate"
+
+def classify_market_stress():
+    try:
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=JPY", timeout=5)
+        jpy = r.json()["rates"]["JPY"]
+        if jpy > 150:
+            return "Elevated"
+        elif jpy < 135:
+            return "Low"
+        return "Normal"
+    except:
+        return "Normal"
+
+# =========================
+# ENDPOINTS
+# =========================
+
+@app.get("/")
+def root():
+    return {"status": "backend running"}
+
+@app.get("/gold")
+def gold_price():
+    price_usd = fetch_gold_price_usd()
+    ex_gst = convert_to_inr_10g(price_usd)
+    incl_gst = round(ex_gst * (1 + GST_RATE), 2)
+
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "gold_spot_usd_oz": price_usd,
+        "india_price_10g_ex_gst": ex_gst,
+        "india_price_10g_incl_gst": incl_gst
+    }
+
+@app.get("/pressure")
+def daily_pressure():
+    eur = fetch_usd_eur()
+    inr = fetch_usd_inr()
+
+    monetary = classify_dollar_pressure(eur)
+    inr_level = classify_inr_pressure(inr)
+    market = classify_market_stress()
+
+    daily_score = (
+        pressure_to_score(monetary, MONETARY_MAP) +
+        pressure_to_score(inr_level, INR_MAP) +
+        pressure_to_score(market, MARKET_MAP)
+    )
+
+    history = load_pressure_history()
+    history.append({
+        "date": datetime.utcnow().isoformat(),
+        "score": daily_score
+    })
+    save_pressure_history(history)
+
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "monetary_pressure": monetary,
+        "inr_pressure": inr_level,
+        "market_stress": market,
+        "daily_pressure_score": daily_score
+    }
