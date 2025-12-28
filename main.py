@@ -53,21 +53,16 @@ def gold_price():
 # DAILY PRESSURE MONITOR
 # =========================
 
-def fetch_usd_index_proxy():
-    """
-    Proxy: EUR/USD (inverse logic)
-    If EUR weakens → USD strengthens
-    """
+def fetch_usd_eur():
     try:
-        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=EUR", timeout=5)
-        eur = r.json()["rates"]["EUR"]
-        return eur
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=EUR", timeout=5)
+        return r.json()["rates"]["EUR"]
     except:
         return None
 
 def fetch_usd_inr():
     try:
-        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=INR", timeout=5)
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=5)
         return r.json()["rates"]["INR"]
     except:
         return None
@@ -94,10 +89,10 @@ def classify_inr_pressure(inr_rate):
 
 def classify_market_stress():
     """
-    Simple proxy using S&P500 volatility perception
+    Simple proxy using USD/JPY risk signal
     """
     try:
-        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=JPY", timeout=5)
+        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=JPY", timeout=5)
         jpy = r.json()["rates"]["JPY"]
         if jpy > 150:
             return "Elevated"
@@ -110,7 +105,7 @@ def classify_market_stress():
 
 @app.get("/pressure")
 def daily_pressure():
-    eur = fetch_usd_index_proxy()
+    eur = fetch_usd_eur()
     inr = fetch_usd_inr()
 
     return {
