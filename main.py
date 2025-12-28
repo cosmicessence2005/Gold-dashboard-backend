@@ -1,3 +1,6 @@
+import json
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
@@ -107,12 +110,89 @@ def classify_market_stress():
 def daily_pressure():
     eur = fetch_usd_eur()
     inr = fetch_usd_inr()
+   
+    monetary = classify_dollar_pressure(eur)
+    inr_level = classify_inr_pressure(inr)
+    market = classify_market_stress()
 
+        daily_score = (
+        pressure_to_score(monetary, MONETARY_MAP) +
+        pressure_to_score(inr_level, INR_MAP) +
+        pressure_to_score(market, MARKET_MAP)
+    )
+
+        history = load_pressure_history()
+
+    history.append({
+        "date": datetime.utcnow().isoformat(),
+        "score": daily_score
+    })
+
+    save_pressure_history(history)
+
+    
     return {
         "timestamp": datetime.utcnow().isoformat(),
-        "monetary_pressure": classify_dollar_pressure(eur),
-        "inr_pressure": classify_inr_pressure(inr),
-        "market_stress": classify_market_stress(),
+        "monetary_pressure": monetary,
+        "inr_pressure": inr_level,
+        "market_stress": market,
+        "daily_pressure_score": daily_score,
         "confidence": "Medium",
         "note": "Daily pressure indicators only. No recommendation implied."
     }
+
+PRESSURE_FILE = "pressure_history.json"
+MAX_DAYS = 7  # rolling window
+
+
+def load_pressure_history():
+    if not os.path.exists(PRESSURE_FILE):
+        return []
+    with open(PRESSURE_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_pressure_history(history):
+    with open(PRESSURE_FILE, "w") as f:
+        json.dump(history[-MAX_DAYS:], f)
+
+
+def pressure_to_score(value, mapping):
+    return mapping.get(value, 0)
+
+MONETARY_MAP = {
+    "Weakening": -1,
+    "Stable": 0,
+    "Strengthening": 1
+}
+
+INR_MAP = {
+    "Low": -1,
+    "Moderate": 0,
+    "High": 1
+}
+
+MARKET_MAP = {
+    "Low": -1,
+    "Normal": 0,
+    "Elevated": 1
+}
+
+
+def compute_weekly_state(history):
+    if not history:
+        return "Insufficient data"
+
+    total = sum(item["score"] for item in history)
+    avg = total / len(history)
+
+    if avg >= 0.6:
+        return "Strong Upward Pressure"
+    elif avg >= 0.2:
+        return "Mild Upward Pressure"
+    elif avg <= -0.6:
+        return "Strong Downward Pressure"
+    elif avg <= -0.2:
+        return "Mild Downward Pressure"
+    else:
+        return "Neutral"
