@@ -55,3 +55,41 @@ def gold_dashboard():
         "gold_price_inr_10g_incl_gst": price_incl_gst,
         "recommendation": decision_logic(price_usd)
     }
+
+from datetime import datetime
+import random
+
+@app.get("/pressure")
+def daily_pressure_monitor():
+    """
+    Daily pressure monitor.
+    This is NOT a recommendation engine.
+    It shows what is changing right now.
+    """
+
+    # ---- Monetary Pressure (proxy logic for now) ----
+    monetary_pressure = random.choice(["Rising", "Stable", "Easing"])
+
+    # ---- INR / India Pressure ----
+    inr_pressure = random.choice(["Low", "Moderate", "High"])
+
+    # ---- Geopolitical Pressure ----
+    geopolitical_pressure = random.choice(["Cooling", "Elevated", "Escalating"])
+
+    # ---- Policy & Trust Stress ----
+    policy_stress = random.choice(["Stable", "Weakening", "Fragile"])
+
+    # ---- Market Stress ----
+    market_stress = random.choice(["Low", "Normal", "High"])
+
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "pressure_channels": {
+            "monetary": monetary_pressure,
+            "india_inr": inr_pressure,
+            "geopolitical": geopolitical_pressure,
+            "policy_trust": policy_stress,
+            "market_stress": market_stress
+        },
+        "note": "Daily pressure indicators only. No recommendation implied."
+    }
