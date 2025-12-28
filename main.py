@@ -1,8 +1,18 @@
 from fastapi import FastAPI
 import requests
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
 app = FastAPI(title="Gold Decision Dashboard")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # allow all origins (safe for your use)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 USD_INR = 83.0
 GST_RATE = 0.03
