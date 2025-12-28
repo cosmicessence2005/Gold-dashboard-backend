@@ -19,7 +19,7 @@ app.add_middleware(
 # CONSTANTS
 # =========================
 
-USD_INR_STATIC = 83.0
+        
 GST_RATE = 0.03
 GRAMS_PER_OUNCE = 31.1035
 
@@ -34,7 +34,13 @@ def fetch_gold_price_usd():
     return 2350.0
 
 def convert_to_inr_10g(price_usd_oz):
-    price_inr_oz = price_usd_oz * USD_INR_STATIC
+    usd_inr = fetch_live_usd_inr()
+
+    # Fallback safety (rare)
+    if usd_inr is None:
+        usd_inr = 83.0
+
+    price_inr_oz = price_usd_oz * usd_inr
     price_inr_per_gram = price_inr_oz / GRAMS_PER_OUNCE
     return round(price_inr_per_gram * 10, 2)
 
@@ -76,6 +82,16 @@ def pressure_to_score(value, mapping):
 # =========================
 # FX FETCHERS
 # =========================
+
+def fetch_live_usd_inr():
+    try:
+        r = requests.get(
+            "https://api.frankfurter.app/latest?from=USD&to=INR",
+            timeout=5
+        )
+        return r.json()["rates"]["INR"]
+    except:
+        return None
 
 def fetch_usd_eur():
     try:
@@ -134,13 +150,15 @@ def gold_price():
     price_usd = fetch_gold_price_usd()
     ex_gst = convert_to_inr_10g(price_usd)
     incl_gst = round(ex_gst * (1 + GST_RATE), 2)
-
+    usd_inr = fetch_live_usd_inr()
+    
     return {
-        "timestamp": datetime.utcnow().isoformat(),
-        "gold_spot_usd_oz": price_usd,
-        "india_price_10g_ex_gst": ex_gst,
-        "india_price_10g_incl_gst": incl_gst
-    }
+    "timestamp": datetime.utcnow().isoformat(),
+    "gold_spot_usd_oz": price_usd,
+    "usd_inr_rate": usd_inr,
+    "india_price_10g_ex_gst": ex_gst,
+    "india_price_10g_incl_gst": incl_gst
+}
 
 @app.get("/pressure")
 def daily_pressure():
