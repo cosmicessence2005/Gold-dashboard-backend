@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+import requests
 
 app = FastAPI(title="Gold Dashboard Backend")
 
-# ---- CORS (required for frontend access) ----
+# ---- CORS ----
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,43 +15,109 @@ app.add_middleware(
 )
 
 # ---- Constants ----
-USD_INR = 83.0                 # temporary static value
+USD_INR_STATIC = 83.0
 GST_RATE = 0.03
 GRAMS_PER_OUNCE = 31.1035
 
-# ---- Gold price source (safe fallback) ----
-def fetch_gold_price_usd():
-    """
-    Stable fallback gold price (USD per ounce).
-    This will be replaced later with live data.
-    """
-    return 2350.0
+# =========================
+# GOLD PRICE (STABLE)
+# =========================
 
+def fetch_gold_price_usd():
+    return 2350.0  # stable fallback
 
 def convert_to_inr_10g(price_usd_oz: float):
-    price_inr_oz = price_usd_oz * USD_INR
+    price_inr_oz = price_usd_oz * USD_INR_STATIC
     price_inr_per_gram = price_inr_oz / GRAMS_PER_OUNCE
     return round(price_inr_per_gram * 10, 2)
 
-
-# ---- Health check ----
 @app.get("/")
 def root():
     return {"status": "backend running"}
 
-
-# ---- Gold price endpoint ----
 @app.get("/gold")
 def gold_price():
     price_usd = fetch_gold_price_usd()
-
-    price_inr_ex_gst = convert_to_inr_10g(price_usd)
-    price_inr_incl_gst = round(price_inr_ex_gst * (1 + GST_RATE), 2)
+    price_ex_gst = convert_to_inr_10g(price_usd)
+    price_incl_gst = round(price_ex_gst * (1 + GST_RATE), 2)
 
     return {
         "timestamp": datetime.utcnow().isoformat(),
         "gold_spot_usd_oz": price_usd,
-        "india_price_10g_ex_gst": price_inr_ex_gst,
-        "india_price_10g_incl_gst": price_inr_incl_gst,
+        "india_price_10g_ex_gst": price_ex_gst,
+        "india_price_10g_incl_gst": price_incl_gst,
         "notes": "Spot-linked estimate. Retail premiums not included."
+    }
+
+# =========================
+# DAILY PRESSURE MONITOR
+# =========================
+
+def fetch_usd_index_proxy():
+    """
+    Proxy: EUR/USD (inverse logic)
+    If EUR weakens → USD strengthens
+    """
+    try:
+        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=EUR", timeout=5)
+        eur = r.json()["rates"]["EUR"]
+        return eur
+    except:
+        return None
+
+def fetch_usd_inr():
+    try:
+        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=INR", timeout=5)
+        return r.json()["rates"]["INR"]
+    except:
+        return None
+
+def classify_dollar_pressure(eur_rate):
+    if eur_rate is None:
+        return "Unknown"
+    if eur_rate < 0.90:
+        return "Strengthening"
+    elif eur_rate > 0.94:
+        return "Weakening"
+    else:
+        return "Stable"
+
+def classify_inr_pressure(inr_rate):
+    if inr_rate is None:
+        return "Unknown"
+    if inr_rate > 83.5:
+        return "High"
+    elif inr_rate < 82.5:
+        return "Low"
+    else:
+        return "Moderate"
+
+def classify_market_stress():
+    """
+    Simple proxy using S&P500 volatility perception
+    """
+    try:
+        r = requests.get("https://api.exchangerate.host/latest?base=USD&symbols=JPY", timeout=5)
+        jpy = r.json()["rates"]["JPY"]
+        if jpy > 150:
+            return "Elevated"
+        elif jpy < 135:
+            return "Low"
+        else:
+            return "Normal"
+    except:
+        return "Unknown"
+
+@app.get("/pressure")
+def daily_pressure():
+    eur = fetch_usd_index_proxy()
+    inr = fetch_usd_inr()
+
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "monetary_pressure": classify_dollar_pressure(eur),
+        "inr_pressure": classify_inr_pressure(inr),
+        "market_stress": classify_market_stress(),
+        "confidence": "Medium",
+        "note": "Daily pressure indicators only. No recommendation implied."
     }
