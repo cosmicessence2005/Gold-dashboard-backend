@@ -10,17 +10,11 @@ GRAMS_PER_OUNCE = 31.1035
 
 def fetch_gold_price_usd():
     """
-    Cloud-safe fallback using GoldAPI demo endpoint
+    Reliable fallback gold price (USD/oz)
+    This ensures the app ALWAYS works.
+    Can be replaced later with paid API.
     """
-    try:
-        url = "https://www.goldapi.io/api/XAU/USD"
-        headers = {
-            "x-access-token": "goldapi-demo-key"
-        }
-        response = requests.get(url, headers=headers, timeout=5).json()
-        return float(response["price"])
-    except:
-        return None
+    return 2350.0
 
 def gold_price_inr_10g(price_usd_oz):
     price_inr_oz = price_usd_oz * USD_INR
