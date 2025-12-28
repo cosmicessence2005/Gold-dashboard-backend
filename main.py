@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import requests
-import json
-import os
 
-app = FastAPI(title="Gold Dashboard Backend")
+app = FastAPI(title="Gold Intelligence Dashboard")
 
+# -----------------------------
+# CORS
+# -----------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,177 +16,136 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
+# -----------------------------
 # CONSTANTS
-# =========================
-
-        
-GST_RATE = 0.03
+# -----------------------------
 GRAMS_PER_OUNCE = 31.1035
+GST_RATE = 0.03
 
-PRESSURE_FILE = "pressure_history.json"
-MAX_DAYS = 7
+# -----------------------------
+# LIVE DATA FETCHERS
+# -----------------------------
 
-# =========================
-# GOLD PRICE
-# =========================
+def fetch_gold_spot_usd():
+    """
+    Live Gold Spot Price (XAU/USD)
+    Source: metals.live
+    """
+    r = requests.get("https://api.metals.live/v1/spot/gold", timeout=5)
+    data = r.json()
+    return float(data[0][1])
 
-def fetch_gold_price_usd():
-    return 2350.0
 
-def convert_to_inr_10g(price_usd_oz):
-    usd_inr = fetch_live_usd_inr()
+def fetch_fx_rate(base, target):
+    """
+    Live FX rates
+    Source: exchangerate.host (ECB-backed)
+    """
+    r = requests.get(
+        f"https://api.exchangerate.host/latest?base={base}&symbols={target}",
+        timeout=5
+    )
+    data = r.json()
+    return float(data["rates"][target])
 
-    # Fallback safety (rare)
-    if usd_inr is None:
-        usd_inr = 83.0
 
-    price_inr_oz = price_usd_oz * usd_inr
-    price_inr_per_gram = price_inr_oz / GRAMS_PER_OUNCE
-    return round(price_inr_per_gram * 10, 2)
+# -----------------------------
+# PRICE CALCULATION
+# -----------------------------
 
-# =========================
-# PRESSURE HELPERS
-# =========================
+def gold_price_inr_10g(usd_per_oz, usd_inr):
+    inr_per_oz = usd_per_oz * usd_inr
+    inr_per_gram = inr_per_oz / GRAMS_PER_OUNCE
+    return round(inr_per_gram * 10, 2)
 
-MONETARY_MAP = {
-    "Weakening": -1,
-    "Stable": 0,
-    "Strengthening": 1
-}
 
-INR_MAP = {
-    "Low": -1,
-    "Moderate": 0,
-    "High": 1
-}
+# -----------------------------
+# CLASSIFICATION HELPERS
+# -----------------------------
 
-MARKET_MAP = {
-    "Low": -1,
-    "Normal": 0,
-    "Elevated": 1
-}
-
-def load_pressure_history():
-    if not os.path.exists(PRESSURE_FILE):
-        return []
-    with open(PRESSURE_FILE, "r") as f:
-        return json.load(f)
-
-def save_pressure_history(history):
-    with open(PRESSURE_FILE, "w") as f:
-        json.dump(history[-MAX_DAYS:], f)
-
-def pressure_to_score(value, mapping):
-    return mapping.get(value, 0)
-
-# =========================
-# FX FETCHERS
-# =========================
-
-def fetch_live_usd_inr():
-    try:
-        r = requests.get(
-            "https://api.frankfurter.app/latest?from=USD&to=INR",
-            timeout=5
-        )
-        return r.json()["rates"]["INR"]
-    except:
-        return None
-
-def fetch_usd_eur():
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=EUR", timeout=5)
-        return r.json()["rates"]["EUR"]
-    except:
-        return None
-
-def fetch_usd_inr():
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=5)
-        return r.json()["rates"]["INR"]
-    except:
-        return None
-
-def classify_dollar_pressure(eur):
-    if eur is None:
-        return "Stable"
-    if eur < 0.90:
-        return "Strengthening"
-    elif eur > 0.94:
-        return "Weakening"
-    return "Stable"
-
-def classify_inr_pressure(inr):
-    if inr is None:
-        return "Moderate"
-    if inr > 83.5:
+def classify_usd_pressure(eur_usd):
+    # EUR down = USD strong
+    if eur_usd < 1.05:
         return "High"
-    elif inr < 82.5:
+    elif eur_usd > 1.10:
         return "Low"
     return "Moderate"
 
-def classify_market_stress():
-    try:
-        r = requests.get("https://api.frankfurter.app/latest?from=USD&to=JPY", timeout=5)
-        jpy = r.json()["rates"]["JPY"]
-        if jpy > 150:
-            return "Elevated"
-        elif jpy < 135:
-            return "Low"
-        return "Normal"
-    except:
-        return "Normal"
 
-# =========================
+def classify_inr_pressure(usd_inr):
+    if usd_inr > 88.5:
+        return "High"
+    elif usd_inr < 85.0:
+        return "Low"
+    return "Moderate"
+
+
+def classify_gold_momentum(gold_usd):
+    if gold_usd > 2350:
+        return "Positive"
+    elif gold_usd < 2200:
+        return "Negative"
+    return "Neutral"
+
+
+def classify_risk_stress(usd_jpy):
+    if usd_jpy > 150:
+        return "High"
+    elif usd_jpy < 135:
+        return "Low"
+    return "Moderate"
+
+
+# -----------------------------
 # ENDPOINTS
-# =========================
+# -----------------------------
 
 @app.get("/")
 def root():
-    return {"status": "backend running"}
+    return {"status": "LIVE backend running"}
+
 
 @app.get("/gold")
-def gold_price():
-    price_usd = fetch_gold_price_usd()
-    ex_gst = convert_to_inr_10g(price_usd)
-    incl_gst = round(ex_gst * (1 + GST_RATE), 2)
-    usd_inr = fetch_live_usd_inr()
-    
-    return {
-    "timestamp": datetime.utcnow().isoformat(),
-    "gold_spot_usd_oz": price_usd,
-    "usd_inr_rate": usd_inr,
-    "india_price_10g_ex_gst": ex_gst,
-    "india_price_10g_incl_gst": incl_gst
-}
+def gold_live():
+    gold_usd = fetch_gold_spot_usd()
+    usd_inr = fetch_fx_rate("USD", "INR")
+    eur_usd = fetch_fx_rate("EUR", "USD")
 
-@app.get("/pressure")
-def daily_pressure():
-    eur = fetch_usd_eur()
-    inr = fetch_usd_inr()
-
-    monetary = classify_dollar_pressure(eur)
-    inr_level = classify_inr_pressure(inr)
-    market = classify_market_stress()
-
-    daily_score = (
-        pressure_to_score(monetary, MONETARY_MAP) +
-        pressure_to_score(inr_level, INR_MAP) +
-        pressure_to_score(market, MARKET_MAP)
-    )
-
-    history = load_pressure_history()
-    history.append({
-        "date": datetime.utcnow().isoformat(),
-        "score": daily_score
-    })
-    save_pressure_history(history)
+    price_10g_ex_gst = gold_price_inr_10g(gold_usd, usd_inr)
+    price_10g_incl_gst = round(price_10g_ex_gst * (1 + GST_RATE), 2)
 
     return {
         "timestamp": datetime.utcnow().isoformat(),
-        "monetary_pressure": monetary,
-        "inr_pressure": inr_level,
-        "market_stress": market,
-        "daily_pressure_score": daily_score
+        "gold_spot_usd_oz": gold_usd,
+        "usd_inr": usd_inr,
+        "eur_usd": eur_usd,
+        "india_gold_10g_ex_gst": price_10g_ex_gst,
+        "india_gold_10g_incl_gst": price_10g_incl_gst,
+        "data_sources": {
+            "gold": "metals.live",
+            "fx": "exchangerate.host (ECB)"
+        }
+    }
+
+
+@app.get("/pressure")
+def pressure_live():
+    gold_usd = fetch_gold_spot_usd()
+    usd_inr = fetch_fx_rate("USD", "INR")
+    eur_usd = fetch_fx_rate("EUR", "USD")
+    usd_jpy = fetch_fx_rate("USD", "JPY")
+
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "usd_pressure": classify_usd_pressure(eur_usd),
+        "inr_pressure": classify_inr_pressure(usd_inr),
+        "gold_momentum": classify_gold_momentum(gold_usd),
+        "risk_stress": classify_risk_stress(usd_jpy),
+        "live_inputs": {
+            "gold_usd": gold_usd,
+            "usd_inr": usd_inr,
+            "eur_usd": eur_usd,
+            "usd_jpy": usd_jpy
+        },
+        "note": "All indicators derived from LIVE market data. No static values."
     }
