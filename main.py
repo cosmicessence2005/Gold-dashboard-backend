@@ -9,10 +9,16 @@ GST_RATE = 0.03
 GRAMS_PER_OUNCE = 31.1035
 
 def fetch_gold_price_usd():
-    url = "https://api.metals.live/v1/spot/gold"
+    """
+    Cloud-safe fallback using GoldAPI demo endpoint
+    """
     try:
-        data = requests.get(url, timeout=5).json()
-        return float(data[0][1])
+        url = "https://www.goldapi.io/api/XAU/USD"
+        headers = {
+            "x-access-token": "goldapi-demo-key"
+        }
+        response = requests.get(url, headers=headers, timeout=5).json()
+        return float(response["price"])
     except:
         return None
 
